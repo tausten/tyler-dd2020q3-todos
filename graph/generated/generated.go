@@ -219,19 +219,31 @@ var sources = []*ast.Source{
 #
 # https://gqlgen.com/getting-started/
 
+"""
+A todo item
+"""
 type Todo {
   id: ID!
   text: String!
+  "Is the item done yet?"
   done: Boolean!
+  "The user assigned the todo item"
   user: User!
 }
 
+"""
+A user in the system
+"""
 type User {
   id: ID!
   name: String!
 }
 
+"""
+Todo-related query schema
+"""
 type Query {
+  "The list of _all_ todo items in the system"
   todos: [Todo!]!
 }
 
@@ -240,7 +252,11 @@ input NewTodo {
   userId: String!
 }
 
+"""
+Todo-related mutations.
+"""
 type Mutation {
+  "Create a new todo item with the specified details"
   createTodo(input: NewTodo!): Todo!
 }`, BuiltIn: false},
 }

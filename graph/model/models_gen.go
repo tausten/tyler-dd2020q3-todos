@@ -7,6 +7,7 @@ type NewTodo struct {
 	UserID string `json:"userId"`
 }
 
+// A user in the system
 type User struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
