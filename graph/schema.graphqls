@@ -1,44 +1,65 @@
-# GraphQL schema example
-#
-# https://gqlgen.com/getting-started/
-
 """
-A todo item
-"""
-type Todo {
-  id: ID!
-  text: String!
-  "Is the item done yet?"
-  done: Boolean!
-  "The user assigned the todo item"
-  user: User!
-}
-
-"""
-A user in the system
-"""
-type User {
-  id: ID!
-  name: String!
-}
-
-"""
-Todo-related query schema
+Aggregate query schema
 """
 type Query {
   "The list of _all_ todo items in the system"
   todos: [Todo!]!
-}
 
-input NewTodo {
-  text: String!
-  userId: String!
+  galaxies(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): GalaxyConnection
+  constellations(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): ConstellationConnection
+  planets(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+    planetType: PlanetTypeEnum
+  ): PlanetConnection
+  stars(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): StarConnection
+  """Fetches an object given its ID"""
+  node(
+    """The ID of the object"""
+    id: ID!
+  ): Node
 }
 
 """
-Todo-related mutations.
+Aggregate mutations.
 """
 type Mutation {
   "Create a new todo item with the specified details"
   createTodo(input: NewTodo!): Todo!
+
+  createConstellation(input: CreateConstellationInput!): CreateConstellationPayload
+  createConstellations(input: [CreateConstellationInput!]!): CreateConstellationsPayload
 }

@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -37,6 +39,7 @@ type Config struct {
 type ResolverRoot interface {
 	Mutation() MutationResolver
 	Query() QueryResolver
+	Subscription() SubscriptionResolver
 	Todo() TodoResolver
 }
 
@@ -44,12 +47,121 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	Constellation struct {
+		CreatedAt func(childComplexity int) int
+		Galaxies  func(childComplexity int, after *string, before *string, first *int, last *int) int
+		ID        func(childComplexity int) int
+		Name      func(childComplexity int) int
+		UpdatedAt func(childComplexity int) int
+	}
+
+	ConstellationConnection struct {
+		Edges      func(childComplexity int) int
+		Nodes      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	ConstellationEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	CreateConstellationPayload struct {
+		Constellation func(childComplexity int) int
+	}
+
+	CreateConstellationsPayload struct {
+		Constellations func(childComplexity int) int
+	}
+
+	Galaxy struct {
+		CreatedAt func(childComplexity int) int
+		ID        func(childComplexity int) int
+		Name      func(childComplexity int) int
+		Planets   func(childComplexity int, after *string, before *string, first *int, last *int) int
+		Stars     func(childComplexity int, after *string, before *string, first *int, last *int) int
+		UpdatedAt func(childComplexity int) int
+	}
+
+	GalaxyConnection struct {
+		Edges      func(childComplexity int) int
+		Nodes      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	GalaxyEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
 	Mutation struct {
-		CreateTodo func(childComplexity int, input model.NewTodo) int
+		CreateConstellation  func(childComplexity int, input model.CreateConstellationInput) int
+		CreateConstellations func(childComplexity int, input []*model.CreateConstellationInput) int
+		CreateTodo           func(childComplexity int, input model.NewTodo) int
+	}
+
+	PageInfo struct {
+		EndCursor       func(childComplexity int) int
+		HasNextPage     func(childComplexity int) int
+		HasPreviousPage func(childComplexity int) int
+		StartCursor     func(childComplexity int) int
+	}
+
+	Planet struct {
+		CreatedAt   func(childComplexity int) int
+		Description func(childComplexity int) int
+		Galaxy      func(childComplexity int) int
+		ID          func(childComplexity int) int
+		Name        func(childComplexity int) int
+		PlanetType  func(childComplexity int) int
+		UpdatedAt   func(childComplexity int) int
+	}
+
+	PlanetConnection struct {
+		Edges      func(childComplexity int) int
+		Nodes      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	PlanetEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
 	}
 
 	Query struct {
-		Todos func(childComplexity int) int
+		Constellations func(childComplexity int, after *string, before *string, first *int, last *int) int
+		Galaxies       func(childComplexity int, after *string, before *string, first *int, last *int) int
+		Node           func(childComplexity int, id string) int
+		Planets        func(childComplexity int, after *string, before *string, first *int, last *int, planetType *model.PlanetTypeEnum) int
+		Stars          func(childComplexity int, after *string, before *string, first *int, last *int) int
+		Todos          func(childComplexity int) int
+	}
+
+	Star struct {
+		Class     func(childComplexity int) int
+		CreatedAt func(childComplexity int) int
+		ID        func(childComplexity int) int
+		Name      func(childComplexity int) int
+		UpdatedAt func(childComplexity int) int
+	}
+
+	StarConnection struct {
+		Edges      func(childComplexity int) int
+		Nodes      func(childComplexity int) int
+		PageInfo   func(childComplexity int) int
+		TotalCount func(childComplexity int) int
+	}
+
+	StarEdge struct {
+		Cursor func(childComplexity int) int
+		Node   func(childComplexity int) int
+	}
+
+	Subscription struct {
+		Constellations func(childComplexity int) int
 	}
 
 	Todo struct {
@@ -67,9 +179,19 @@ type ComplexityRoot struct {
 
 type MutationResolver interface {
 	CreateTodo(ctx context.Context, input model.NewTodo) (*model.Todo, error)
+	CreateConstellation(ctx context.Context, input model.CreateConstellationInput) (*model.CreateConstellationPayload, error)
+	CreateConstellations(ctx context.Context, input []*model.CreateConstellationInput) (*model.CreateConstellationsPayload, error)
 }
 type QueryResolver interface {
 	Todos(ctx context.Context) ([]*model.Todo, error)
+	Galaxies(ctx context.Context, after *string, before *string, first *int, last *int) (*model.GalaxyConnection, error)
+	Constellations(ctx context.Context, after *string, before *string, first *int, last *int) (*model.ConstellationConnection, error)
+	Planets(ctx context.Context, after *string, before *string, first *int, last *int, planetType *model.PlanetTypeEnum) (*model.PlanetConnection, error)
+	Stars(ctx context.Context, after *string, before *string, first *int, last *int) (*model.StarConnection, error)
+	Node(ctx context.Context, id string) (model.Node, error)
+}
+type SubscriptionResolver interface {
+	Constellations(ctx context.Context) (<-chan []*model.Constellation, error)
 }
 type TodoResolver interface {
 	User(ctx context.Context, obj *model.Todo) (*model.User, error)
@@ -90,6 +212,220 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 	_ = ec
 	switch typeName + "." + field {
 
+	case "Constellation.createdAt":
+		if e.complexity.Constellation.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.Constellation.CreatedAt(childComplexity), true
+
+	case "Constellation.galaxies":
+		if e.complexity.Constellation.Galaxies == nil {
+			break
+		}
+
+		args, err := ec.field_Constellation_galaxies_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Constellation.Galaxies(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int)), true
+
+	case "Constellation.id":
+		if e.complexity.Constellation.ID == nil {
+			break
+		}
+
+		return e.complexity.Constellation.ID(childComplexity), true
+
+	case "Constellation.name":
+		if e.complexity.Constellation.Name == nil {
+			break
+		}
+
+		return e.complexity.Constellation.Name(childComplexity), true
+
+	case "Constellation.updatedAt":
+		if e.complexity.Constellation.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.Constellation.UpdatedAt(childComplexity), true
+
+	case "ConstellationConnection.edges":
+		if e.complexity.ConstellationConnection.Edges == nil {
+			break
+		}
+
+		return e.complexity.ConstellationConnection.Edges(childComplexity), true
+
+	case "ConstellationConnection.nodes":
+		if e.complexity.ConstellationConnection.Nodes == nil {
+			break
+		}
+
+		return e.complexity.ConstellationConnection.Nodes(childComplexity), true
+
+	case "ConstellationConnection.pageInfo":
+		if e.complexity.ConstellationConnection.PageInfo == nil {
+			break
+		}
+
+		return e.complexity.ConstellationConnection.PageInfo(childComplexity), true
+
+	case "ConstellationConnection.totalCount":
+		if e.complexity.ConstellationConnection.TotalCount == nil {
+			break
+		}
+
+		return e.complexity.ConstellationConnection.TotalCount(childComplexity), true
+
+	case "ConstellationEdge.cursor":
+		if e.complexity.ConstellationEdge.Cursor == nil {
+			break
+		}
+
+		return e.complexity.ConstellationEdge.Cursor(childComplexity), true
+
+	case "ConstellationEdge.node":
+		if e.complexity.ConstellationEdge.Node == nil {
+			break
+		}
+
+		return e.complexity.ConstellationEdge.Node(childComplexity), true
+
+	case "CreateConstellationPayload.constellation":
+		if e.complexity.CreateConstellationPayload.Constellation == nil {
+			break
+		}
+
+		return e.complexity.CreateConstellationPayload.Constellation(childComplexity), true
+
+	case "CreateConstellationsPayload.constellations":
+		if e.complexity.CreateConstellationsPayload.Constellations == nil {
+			break
+		}
+
+		return e.complexity.CreateConstellationsPayload.Constellations(childComplexity), true
+
+	case "Galaxy.createdAt":
+		if e.complexity.Galaxy.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.Galaxy.CreatedAt(childComplexity), true
+
+	case "Galaxy.id":
+		if e.complexity.Galaxy.ID == nil {
+			break
+		}
+
+		return e.complexity.Galaxy.ID(childComplexity), true
+
+	case "Galaxy.name":
+		if e.complexity.Galaxy.Name == nil {
+			break
+		}
+
+		return e.complexity.Galaxy.Name(childComplexity), true
+
+	case "Galaxy.planets":
+		if e.complexity.Galaxy.Planets == nil {
+			break
+		}
+
+		args, err := ec.field_Galaxy_planets_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Galaxy.Planets(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int)), true
+
+	case "Galaxy.stars":
+		if e.complexity.Galaxy.Stars == nil {
+			break
+		}
+
+		args, err := ec.field_Galaxy_stars_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Galaxy.Stars(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int)), true
+
+	case "Galaxy.updatedAt":
+		if e.complexity.Galaxy.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.Galaxy.UpdatedAt(childComplexity), true
+
+	case "GalaxyConnection.edges":
+		if e.complexity.GalaxyConnection.Edges == nil {
+			break
+		}
+
+		return e.complexity.GalaxyConnection.Edges(childComplexity), true
+
+	case "GalaxyConnection.nodes":
+		if e.complexity.GalaxyConnection.Nodes == nil {
+			break
+		}
+
+		return e.complexity.GalaxyConnection.Nodes(childComplexity), true
+
+	case "GalaxyConnection.pageInfo":
+		if e.complexity.GalaxyConnection.PageInfo == nil {
+			break
+		}
+
+		return e.complexity.GalaxyConnection.PageInfo(childComplexity), true
+
+	case "GalaxyConnection.totalCount":
+		if e.complexity.GalaxyConnection.TotalCount == nil {
+			break
+		}
+
+		return e.complexity.GalaxyConnection.TotalCount(childComplexity), true
+
+	case "GalaxyEdge.cursor":
+		if e.complexity.GalaxyEdge.Cursor == nil {
+			break
+		}
+
+		return e.complexity.GalaxyEdge.Cursor(childComplexity), true
+
+	case "GalaxyEdge.node":
+		if e.complexity.GalaxyEdge.Node == nil {
+			break
+		}
+
+		return e.complexity.GalaxyEdge.Node(childComplexity), true
+
+	case "Mutation.createConstellation":
+		if e.complexity.Mutation.CreateConstellation == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createConstellation_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.CreateConstellation(childComplexity, args["input"].(model.CreateConstellationInput)), true
+
+	case "Mutation.createConstellations":
+		if e.complexity.Mutation.CreateConstellations == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_createConstellations_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.CreateConstellations(childComplexity, args["input"].([]*model.CreateConstellationInput)), true
+
 	case "Mutation.createTodo":
 		if e.complexity.Mutation.CreateTodo == nil {
 			break
@@ -102,12 +438,275 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 
 		return e.complexity.Mutation.CreateTodo(childComplexity, args["input"].(model.NewTodo)), true
 
+	case "PageInfo.endCursor":
+		if e.complexity.PageInfo.EndCursor == nil {
+			break
+		}
+
+		return e.complexity.PageInfo.EndCursor(childComplexity), true
+
+	case "PageInfo.hasNextPage":
+		if e.complexity.PageInfo.HasNextPage == nil {
+			break
+		}
+
+		return e.complexity.PageInfo.HasNextPage(childComplexity), true
+
+	case "PageInfo.hasPreviousPage":
+		if e.complexity.PageInfo.HasPreviousPage == nil {
+			break
+		}
+
+		return e.complexity.PageInfo.HasPreviousPage(childComplexity), true
+
+	case "PageInfo.startCursor":
+		if e.complexity.PageInfo.StartCursor == nil {
+			break
+		}
+
+		return e.complexity.PageInfo.StartCursor(childComplexity), true
+
+	case "Planet.createdAt":
+		if e.complexity.Planet.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.Planet.CreatedAt(childComplexity), true
+
+	case "Planet.description":
+		if e.complexity.Planet.Description == nil {
+			break
+		}
+
+		return e.complexity.Planet.Description(childComplexity), true
+
+	case "Planet.galaxy":
+		if e.complexity.Planet.Galaxy == nil {
+			break
+		}
+
+		return e.complexity.Planet.Galaxy(childComplexity), true
+
+	case "Planet.id":
+		if e.complexity.Planet.ID == nil {
+			break
+		}
+
+		return e.complexity.Planet.ID(childComplexity), true
+
+	case "Planet.name":
+		if e.complexity.Planet.Name == nil {
+			break
+		}
+
+		return e.complexity.Planet.Name(childComplexity), true
+
+	case "Planet.planetType":
+		if e.complexity.Planet.PlanetType == nil {
+			break
+		}
+
+		return e.complexity.Planet.PlanetType(childComplexity), true
+
+	case "Planet.updatedAt":
+		if e.complexity.Planet.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.Planet.UpdatedAt(childComplexity), true
+
+	case "PlanetConnection.edges":
+		if e.complexity.PlanetConnection.Edges == nil {
+			break
+		}
+
+		return e.complexity.PlanetConnection.Edges(childComplexity), true
+
+	case "PlanetConnection.nodes":
+		if e.complexity.PlanetConnection.Nodes == nil {
+			break
+		}
+
+		return e.complexity.PlanetConnection.Nodes(childComplexity), true
+
+	case "PlanetConnection.pageInfo":
+		if e.complexity.PlanetConnection.PageInfo == nil {
+			break
+		}
+
+		return e.complexity.PlanetConnection.PageInfo(childComplexity), true
+
+	case "PlanetConnection.totalCount":
+		if e.complexity.PlanetConnection.TotalCount == nil {
+			break
+		}
+
+		return e.complexity.PlanetConnection.TotalCount(childComplexity), true
+
+	case "PlanetEdge.cursor":
+		if e.complexity.PlanetEdge.Cursor == nil {
+			break
+		}
+
+		return e.complexity.PlanetEdge.Cursor(childComplexity), true
+
+	case "PlanetEdge.node":
+		if e.complexity.PlanetEdge.Node == nil {
+			break
+		}
+
+		return e.complexity.PlanetEdge.Node(childComplexity), true
+
+	case "Query.constellations":
+		if e.complexity.Query.Constellations == nil {
+			break
+		}
+
+		args, err := ec.field_Query_constellations_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Constellations(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int)), true
+
+	case "Query.galaxies":
+		if e.complexity.Query.Galaxies == nil {
+			break
+		}
+
+		args, err := ec.field_Query_galaxies_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Galaxies(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int)), true
+
+	case "Query.node":
+		if e.complexity.Query.Node == nil {
+			break
+		}
+
+		args, err := ec.field_Query_node_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Node(childComplexity, args["id"].(string)), true
+
+	case "Query.planets":
+		if e.complexity.Query.Planets == nil {
+			break
+		}
+
+		args, err := ec.field_Query_planets_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Planets(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int), args["planetType"].(*model.PlanetTypeEnum)), true
+
+	case "Query.stars":
+		if e.complexity.Query.Stars == nil {
+			break
+		}
+
+		args, err := ec.field_Query_stars_args(context.TODO(), rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Stars(childComplexity, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int)), true
+
 	case "Query.todos":
 		if e.complexity.Query.Todos == nil {
 			break
 		}
 
 		return e.complexity.Query.Todos(childComplexity), true
+
+	case "Star.class":
+		if e.complexity.Star.Class == nil {
+			break
+		}
+
+		return e.complexity.Star.Class(childComplexity), true
+
+	case "Star.createdAt":
+		if e.complexity.Star.CreatedAt == nil {
+			break
+		}
+
+		return e.complexity.Star.CreatedAt(childComplexity), true
+
+	case "Star.id":
+		if e.complexity.Star.ID == nil {
+			break
+		}
+
+		return e.complexity.Star.ID(childComplexity), true
+
+	case "Star.name":
+		if e.complexity.Star.Name == nil {
+			break
+		}
+
+		return e.complexity.Star.Name(childComplexity), true
+
+	case "Star.updatedAt":
+		if e.complexity.Star.UpdatedAt == nil {
+			break
+		}
+
+		return e.complexity.Star.UpdatedAt(childComplexity), true
+
+	case "StarConnection.edges":
+		if e.complexity.StarConnection.Edges == nil {
+			break
+		}
+
+		return e.complexity.StarConnection.Edges(childComplexity), true
+
+	case "StarConnection.nodes":
+		if e.complexity.StarConnection.Nodes == nil {
+			break
+		}
+
+		return e.complexity.StarConnection.Nodes(childComplexity), true
+
+	case "StarConnection.pageInfo":
+		if e.complexity.StarConnection.PageInfo == nil {
+			break
+		}
+
+		return e.complexity.StarConnection.PageInfo(childComplexity), true
+
+	case "StarConnection.totalCount":
+		if e.complexity.StarConnection.TotalCount == nil {
+			break
+		}
+
+		return e.complexity.StarConnection.TotalCount(childComplexity), true
+
+	case "StarEdge.cursor":
+		if e.complexity.StarEdge.Cursor == nil {
+			break
+		}
+
+		return e.complexity.StarEdge.Cursor(childComplexity), true
+
+	case "StarEdge.node":
+		if e.complexity.StarEdge.Node == nil {
+			break
+		}
+
+		return e.complexity.StarEdge.Node(childComplexity), true
+
+	case "Subscription.constellations":
+		if e.complexity.Subscription.Constellations == nil {
+			break
+		}
+
+		return e.complexity.Subscription.Constellations(childComplexity), true
 
 	case "Todo.done":
 		if e.complexity.Todo.Done == nil {
@@ -189,6 +788,23 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 				Data: buf.Bytes(),
 			}
 		}
+	case ast.Subscription:
+		next := ec._Subscription(ctx, rc.Operation.SelectionSet)
+
+		var buf bytes.Buffer
+		return func(ctx context.Context) *graphql.Response {
+			buf.Reset()
+			data := next()
+
+			if data == nil {
+				return nil
+			}
+			data.MarshalGQL(&buf)
+
+			return &graphql.Response{
+				Data: buf.Bytes(),
+			}
+		}
 
 	default:
 		return graphql.OneShot(graphql.ErrorResponse(ctx, "unsupported GraphQL operation"))
@@ -215,7 +831,218 @@ func (ec *executionContext) introspectType(name string) (*introspection.Type, er
 }
 
 var sources = []*ast.Source{
-	{Name: "graph/schema.graphqls", Input: `# GraphQL schema example
+	{Name: "graph/schema.graphqls", Input: `"""
+Aggregate query schema
+"""
+type Query {
+  "The list of _all_ todo items in the system"
+  todos: [Todo!]!
+
+  galaxies(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): GalaxyConnection
+  constellations(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): ConstellationConnection
+  planets(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+    planetType: PlanetTypeEnum
+  ): PlanetConnection
+  stars(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): StarConnection
+  """Fetches an object given its ID"""
+  node(
+    """The ID of the object"""
+    id: ID!
+  ): Node
+}
+
+"""
+Aggregate mutations.
+"""
+type Mutation {
+  "Create a new todo item with the specified details"
+  createTodo(input: NewTodo!): Todo!
+
+  createConstellation(input: CreateConstellationInput!): CreateConstellationPayload
+  createConstellations(input: [CreateConstellationInput!]!): CreateConstellationsPayload
+}
+`, BuiltIn: false},
+	{Name: "graph/schema_astro.graphqls", Input: `type Constellation implements Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  name: String
+  galaxies(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): GalaxyConnection
+}
+type ConstellationConnection {
+  nodes: [Constellation]
+  edges: [ConstellationEdge]
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+type ConstellationEdge {
+  cursor: String!
+  node: Constellation
+}
+input CreateConstellationInput {
+  name: String!
+}
+type CreateConstellationPayload {
+  constellation: Constellation
+}
+type CreateConstellationsPayload {
+  constellations: [Constellation]
+}
+"""
+A date-time string at UTC, such as 2007-12-03T10:15:30Z, compliant with the
+date-time format outlined in section 5.6 of the RFC 3339 profile of the ISO
+8601 standard for representation of dates and times using the Gregorian calendar.
+"""
+scalar DateTime
+type Galaxy implements Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  name: String
+  planets(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): PlanetConnection
+  stars(
+    """Cursor"""
+    after: String
+    """Cursor"""
+    before: String
+    """Give me first n results"""
+    first: Int = 10
+    """Give me last n results"""
+    last: Int
+  ): StarConnection
+}
+type GalaxyConnection {
+  nodes: [Galaxy]
+  edges: [GalaxyEdge]
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+type GalaxyEdge {
+  cursor: String!
+  node: Galaxy
+}
+
+"""An object with an ID"""
+interface Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+}
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+}
+type Planet implements Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  name: String
+  description: String
+  planetType: PlanetTypeEnum
+  galaxy: Galaxy
+}
+type PlanetConnection {
+  nodes: [Planet]
+  edges: [PlanetEdge]
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+type PlanetEdge {
+  cursor: String!
+  node: Planet
+}
+enum PlanetTypeEnum {
+  DOUBLE_PLANET
+  DWARF_PLANET
+  EXOPLANET
+  EXTRAGALACTIC
+  MAJOR_PLANET
+  OUTER_PLANET
+  PULSAR_PLANET
+  ROGUE_PLANET
+}
+
+type Star implements Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  name: String
+  class: StellarClassEnum
+}
+type StarConnection {
+  nodes: [Star]
+  edges: [StarEdge]
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+type StarEdge {
+  cursor: String!
+  node: Star
+}
+enum StellarClassEnum {
+  CLASS_0
+  CLASS_A
+  CLASS_B
+}
+type Subscription {
+  constellations: [Constellation]
+}`, BuiltIn: false},
+	{Name: "graph/schema_todo.graphqls", Input: `# GraphQL schema example
 #
 # https://gqlgen.com/getting-started/
 
@@ -239,32 +1066,173 @@ type User {
   name: String!
 }
 
-"""
-Todo-related query schema
-"""
-type Query {
-  "The list of _all_ todo items in the system"
-  todos: [Todo!]!
-}
-
 input NewTodo {
   text: String!
   userId: String!
 }
-
-"""
-Todo-related mutations.
-"""
-type Mutation {
-  "Create a new todo item with the specified details"
-  createTodo(input: NewTodo!): Todo!
-}`, BuiltIn: false},
+`, BuiltIn: false},
 }
 var parsedSchema = gqlparser.MustLoadSchema(sources...)
 
 // endregion ************************** generated!.gotpl **************************
 
 // region    ***************************** args.gotpl *****************************
+
+func (ec *executionContext) field_Constellation_galaxies_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Galaxy_planets_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Galaxy_stars_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createConstellation_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 model.CreateConstellationInput
+	if tmp, ok := rawArgs["input"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("input"))
+		arg0, err = ec.unmarshalNCreateConstellationInput2githubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationInput(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["input"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_createConstellations_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 []*model.CreateConstellationInput
+	if tmp, ok := rawArgs["input"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("input"))
+		arg0, err = ec.unmarshalNCreateConstellationInput2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationInputᚄ(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["input"] = arg0
+	return args, nil
+}
 
 func (ec *executionContext) field_Mutation_createTodo_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
 	var err error
@@ -293,6 +1261,198 @@ func (ec *executionContext) field_Query___type_args(ctx context.Context, rawArgs
 		}
 	}
 	args["name"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_constellations_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_galaxies_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_node_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 string
+	if tmp, ok := rawArgs["id"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("id"))
+		arg0, err = ec.unmarshalNID2string(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["id"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_planets_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
+	var arg4 *model.PlanetTypeEnum
+	if tmp, ok := rawArgs["planetType"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("planetType"))
+		arg4, err = ec.unmarshalOPlanetTypeEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetTypeEnum(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["planetType"] = arg4
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_stars_args(ctx context.Context, rawArgs map[string]interface{}) (map[string]interface{}, error) {
+	var err error
+	args := map[string]interface{}{}
+	var arg0 *string
+	if tmp, ok := rawArgs["after"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("after"))
+		arg0, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["after"] = arg0
+	var arg1 *string
+	if tmp, ok := rawArgs["before"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("before"))
+		arg1, err = ec.unmarshalOString2ᚖstring(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["before"] = arg1
+	var arg2 *int
+	if tmp, ok := rawArgs["first"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("first"))
+		arg2, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["first"] = arg2
+	var arg3 *int
+	if tmp, ok := rawArgs["last"]; ok {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("last"))
+		arg3, err = ec.unmarshalOInt2ᚖint(ctx, tmp)
+		if err != nil {
+			return nil, err
+		}
+	}
+	args["last"] = arg3
 	return args, nil
 }
 
@@ -333,6 +1493,857 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 // endregion ************************** directives.gotpl **************************
 
 // region    **************************** field.gotpl *****************************
+
+func (ec *executionContext) _Constellation_id(ctx context.Context, field graphql.CollectedField, obj *model.Constellation) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Constellation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.ID, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNID2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Constellation_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.Constellation) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Constellation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.CreatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNDateTime2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Constellation_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.Constellation) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Constellation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.UpdatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalODateTime2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Constellation_name(ctx context.Context, field graphql.CollectedField, obj *model.Constellation) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Constellation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Name, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Constellation_galaxies(ctx context.Context, field graphql.CollectedField, obj *model.Constellation) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Constellation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Constellation_galaxies_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Galaxies, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.GalaxyConnection)
+	fc.Result = res
+	return ec.marshalOGalaxyConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _ConstellationConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.ConstellationConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "ConstellationConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Nodes, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.Constellation)
+	fc.Result = res
+	return ec.marshalOConstellation2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _ConstellationConnection_edges(ctx context.Context, field graphql.CollectedField, obj *model.ConstellationConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "ConstellationConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Edges, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.ConstellationEdge)
+	fc.Result = res
+	return ec.marshalOConstellationEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellationEdge(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _ConstellationConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.ConstellationConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "ConstellationConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.PageInfo, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(*model.PageInfo)
+	fc.Result = res
+	return ec.marshalNPageInfo2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPageInfo(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _ConstellationConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.ConstellationConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "ConstellationConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.TotalCount, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(int)
+	fc.Result = res
+	return ec.marshalNInt2int(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _ConstellationEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *model.ConstellationEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "ConstellationEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Cursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _ConstellationEdge_node(ctx context.Context, field graphql.CollectedField, obj *model.ConstellationEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "ConstellationEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Node, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.Constellation)
+	fc.Result = res
+	return ec.marshalOConstellation2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _CreateConstellationPayload_constellation(ctx context.Context, field graphql.CollectedField, obj *model.CreateConstellationPayload) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "CreateConstellationPayload",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Constellation, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.Constellation)
+	fc.Result = res
+	return ec.marshalOConstellation2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _CreateConstellationsPayload_constellations(ctx context.Context, field graphql.CollectedField, obj *model.CreateConstellationsPayload) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "CreateConstellationsPayload",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Constellations, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.Constellation)
+	fc.Result = res
+	return ec.marshalOConstellation2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Galaxy_id(ctx context.Context, field graphql.CollectedField, obj *model.Galaxy) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Galaxy",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.ID, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNID2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Galaxy_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.Galaxy) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Galaxy",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.CreatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNDateTime2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Galaxy_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.Galaxy) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Galaxy",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.UpdatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalODateTime2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Galaxy_name(ctx context.Context, field graphql.CollectedField, obj *model.Galaxy) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Galaxy",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Name, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Galaxy_planets(ctx context.Context, field graphql.CollectedField, obj *model.Galaxy) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Galaxy",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Galaxy_planets_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Planets, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.PlanetConnection)
+	fc.Result = res
+	return ec.marshalOPlanetConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Galaxy_stars(ctx context.Context, field graphql.CollectedField, obj *model.Galaxy) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Galaxy",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Galaxy_stars_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Stars, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.StarConnection)
+	fc.Result = res
+	return ec.marshalOStarConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _GalaxyConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.GalaxyConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "GalaxyConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Nodes, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.Galaxy)
+	fc.Result = res
+	return ec.marshalOGalaxy2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxy(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _GalaxyConnection_edges(ctx context.Context, field graphql.CollectedField, obj *model.GalaxyConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "GalaxyConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Edges, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.GalaxyEdge)
+	fc.Result = res
+	return ec.marshalOGalaxyEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyEdge(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _GalaxyConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.GalaxyConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "GalaxyConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.PageInfo, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(*model.PageInfo)
+	fc.Result = res
+	return ec.marshalNPageInfo2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPageInfo(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _GalaxyConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.GalaxyConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "GalaxyConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.TotalCount, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(int)
+	fc.Result = res
+	return ec.marshalNInt2int(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _GalaxyEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *model.GalaxyEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "GalaxyEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Cursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _GalaxyEdge_node(ctx context.Context, field graphql.CollectedField, obj *model.GalaxyEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "GalaxyEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Node, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.Galaxy)
+	fc.Result = res
+	return ec.marshalOGalaxy2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxy(ctx, field.Selections, res)
+}
 
 func (ec *executionContext) _Mutation_createTodo(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	defer func() {
@@ -376,6 +2387,649 @@ func (ec *executionContext) _Mutation_createTodo(ctx context.Context, field grap
 	return ec.marshalNTodo2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐTodo(ctx, field.Selections, res)
 }
 
+func (ec *executionContext) _Mutation_createConstellation(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Mutation_createConstellation_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Mutation().CreateConstellation(rctx, args["input"].(model.CreateConstellationInput))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.CreateConstellationPayload)
+	fc.Result = res
+	return ec.marshalOCreateConstellationPayload2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationPayload(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Mutation_createConstellations(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Mutation_createConstellations_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Mutation().CreateConstellations(rctx, args["input"].([]*model.CreateConstellationInput))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.CreateConstellationsPayload)
+	fc.Result = res
+	return ec.marshalOCreateConstellationsPayload2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationsPayload(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PageInfo_endCursor(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PageInfo",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.EndCursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PageInfo_hasNextPage(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PageInfo",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.HasNextPage, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(bool)
+	fc.Result = res
+	return ec.marshalNBoolean2bool(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PageInfo_hasPreviousPage(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PageInfo",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.HasPreviousPage, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(bool)
+	fc.Result = res
+	return ec.marshalNBoolean2bool(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PageInfo_startCursor(ctx context.Context, field graphql.CollectedField, obj *model.PageInfo) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PageInfo",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.StartCursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_id(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.ID, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNID2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.CreatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNDateTime2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.UpdatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalODateTime2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_name(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Name, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_description(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Description, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_planetType(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.PlanetType, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.PlanetTypeEnum)
+	fc.Result = res
+	return ec.marshalOPlanetTypeEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetTypeEnum(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Planet_galaxy(ctx context.Context, field graphql.CollectedField, obj *model.Planet) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Planet",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Galaxy, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.Galaxy)
+	fc.Result = res
+	return ec.marshalOGalaxy2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxy(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PlanetConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.PlanetConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PlanetConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Nodes, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.Planet)
+	fc.Result = res
+	return ec.marshalOPlanet2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanet(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PlanetConnection_edges(ctx context.Context, field graphql.CollectedField, obj *model.PlanetConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PlanetConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Edges, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.PlanetEdge)
+	fc.Result = res
+	return ec.marshalOPlanetEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetEdge(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PlanetConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.PlanetConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PlanetConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.PageInfo, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(*model.PageInfo)
+	fc.Result = res
+	return ec.marshalNPageInfo2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPageInfo(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PlanetConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.PlanetConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PlanetConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.TotalCount, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(int)
+	fc.Result = res
+	return ec.marshalNInt2int(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PlanetEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *model.PlanetEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PlanetEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Cursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _PlanetEdge_node(ctx context.Context, field graphql.CollectedField, obj *model.PlanetEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "PlanetEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Node, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.Planet)
+	fc.Result = res
+	return ec.marshalOPlanet2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanet(ctx, field.Selections, res)
+}
+
 func (ec *executionContext) _Query_todos(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -409,6 +3063,201 @@ func (ec *executionContext) _Query_todos(ctx context.Context, field graphql.Coll
 	res := resTmp.([]*model.Todo)
 	fc.Result = res
 	return ec.marshalNTodo2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐTodoᚄ(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Query_galaxies(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Query_galaxies_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Query().Galaxies(rctx, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.GalaxyConnection)
+	fc.Result = res
+	return ec.marshalOGalaxyConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Query_constellations(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Query_constellations_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Query().Constellations(rctx, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.ConstellationConnection)
+	fc.Result = res
+	return ec.marshalOConstellationConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellationConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Query_planets(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Query_planets_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Query().Planets(rctx, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int), args["planetType"].(*model.PlanetTypeEnum))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.PlanetConnection)
+	fc.Result = res
+	return ec.marshalOPlanetConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Query_stars(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Query_stars_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Query().Stars(rctx, args["after"].(*string), args["before"].(*string), args["first"].(*int), args["last"].(*int))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.StarConnection)
+	fc.Result = res
+	return ec.marshalOStarConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarConnection(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Query_node(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	rawArgs := field.ArgumentMap(ec.Variables)
+	args, err := ec.field_Query_node_args(ctx, rawArgs)
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	fc.Args = args
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Query().Node(rctx, args["id"].(string))
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(model.Node)
+	fc.Result = res
+	return ec.marshalONode2githubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐNode(ctx, field.Selections, res)
 }
 
 func (ec *executionContext) _Query___type(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
@@ -480,6 +3329,415 @@ func (ec *executionContext) _Query___schema(ctx context.Context, field graphql.C
 	res := resTmp.(*introspection.Schema)
 	fc.Result = res
 	return ec.marshalO__Schema2ᚖgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐSchema(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Star_id(ctx context.Context, field graphql.CollectedField, obj *model.Star) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Star",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.ID, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNID2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Star_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.Star) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Star",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.CreatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNDateTime2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Star_updatedAt(ctx context.Context, field graphql.CollectedField, obj *model.Star) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Star",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.UpdatedAt, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalODateTime2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Star_name(ctx context.Context, field graphql.CollectedField, obj *model.Star) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Star",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Name, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Star_class(ctx context.Context, field graphql.CollectedField, obj *model.Star) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Star",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Class, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.StellarClassEnum)
+	fc.Result = res
+	return ec.marshalOStellarClassEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStellarClassEnum(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _StarConnection_nodes(ctx context.Context, field graphql.CollectedField, obj *model.StarConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "StarConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Nodes, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.Star)
+	fc.Result = res
+	return ec.marshalOStar2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStar(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _StarConnection_edges(ctx context.Context, field graphql.CollectedField, obj *model.StarConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "StarConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Edges, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.([]*model.StarEdge)
+	fc.Result = res
+	return ec.marshalOStarEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarEdge(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _StarConnection_pageInfo(ctx context.Context, field graphql.CollectedField, obj *model.StarConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "StarConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.PageInfo, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(*model.PageInfo)
+	fc.Result = res
+	return ec.marshalNPageInfo2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPageInfo(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _StarConnection_totalCount(ctx context.Context, field graphql.CollectedField, obj *model.StarConnection) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "StarConnection",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.TotalCount, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(int)
+	fc.Result = res
+	return ec.marshalNInt2int(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _StarEdge_cursor(ctx context.Context, field graphql.CollectedField, obj *model.StarEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "StarEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Cursor, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _StarEdge_node(ctx context.Context, field graphql.CollectedField, obj *model.StarEdge) (ret graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "StarEdge",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   false,
+		IsResolver: false,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Node, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.Star)
+	fc.Result = res
+	return ec.marshalOStar2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStar(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) _Subscription_constellations(ctx context.Context, field graphql.CollectedField) (ret func() graphql.Marshaler) {
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = nil
+		}
+	}()
+	fc := &graphql.FieldContext{
+		Object:     "Subscription",
+		Field:      field,
+		Args:       nil,
+		IsMethod:   true,
+		IsResolver: true,
+	}
+
+	ctx = graphql.WithFieldContext(ctx, fc)
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (interface{}, error) {
+		ctx = rctx // use context from middleware stack in children
+		return ec.resolvers.Subscription().Constellations(rctx)
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return nil
+	}
+	if resTmp == nil {
+		return nil
+	}
+	return func() graphql.Marshaler {
+		res, ok := <-resTmp.(<-chan []*model.Constellation)
+		if !ok {
+			return nil
+		}
+		return graphql.WriterFunc(func(w io.Writer) {
+			w.Write([]byte{'{'})
+			graphql.MarshalString(field.Alias).MarshalGQL(w)
+			w.Write([]byte{':'})
+			ec.marshalOConstellation2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx, field.Selections, res).MarshalGQL(w)
+			w.Write([]byte{'}'})
+		})
+	}
 }
 
 func (ec *executionContext) _Todo_id(ctx context.Context, field graphql.CollectedField, obj *model.Todo) (ret graphql.Marshaler) {
@@ -1779,6 +5037,26 @@ func (ec *executionContext) ___Type_ofType(ctx context.Context, field graphql.Co
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputCreateConstellationInput(ctx context.Context, obj interface{}) (model.CreateConstellationInput, error) {
+	var it model.CreateConstellationInput
+	var asMap = obj.(map[string]interface{})
+
+	for k, v := range asMap {
+		switch k {
+		case "name":
+			var err error
+
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("name"))
+			it.Name, err = ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj interface{}) (model.NewTodo, error) {
 	var it model.NewTodo
 	var asMap = obj.(map[string]interface{})
@@ -1811,9 +5089,302 @@ func (ec *executionContext) unmarshalInputNewTodo(ctx context.Context, obj inter
 
 // region    ************************** interface.gotpl ***************************
 
+func (ec *executionContext) _Node(ctx context.Context, sel ast.SelectionSet, obj model.Node) graphql.Marshaler {
+	switch obj := (obj).(type) {
+	case nil:
+		return graphql.Null
+	case model.Constellation:
+		return ec._Constellation(ctx, sel, &obj)
+	case *model.Constellation:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._Constellation(ctx, sel, obj)
+	case model.Galaxy:
+		return ec._Galaxy(ctx, sel, &obj)
+	case *model.Galaxy:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._Galaxy(ctx, sel, obj)
+	case model.Planet:
+		return ec._Planet(ctx, sel, &obj)
+	case *model.Planet:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._Planet(ctx, sel, obj)
+	case model.Star:
+		return ec._Star(ctx, sel, &obj)
+	case *model.Star:
+		if obj == nil {
+			return graphql.Null
+		}
+		return ec._Star(ctx, sel, obj)
+	default:
+		panic(fmt.Errorf("unexpected type %T", obj))
+	}
+}
+
 // endregion ************************** interface.gotpl ***************************
 
 // region    **************************** object.gotpl ****************************
+
+var constellationImplementors = []string{"Constellation", "Node"}
+
+func (ec *executionContext) _Constellation(ctx context.Context, sel ast.SelectionSet, obj *model.Constellation) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, constellationImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Constellation")
+		case "id":
+			out.Values[i] = ec._Constellation_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._Constellation_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._Constellation_updatedAt(ctx, field, obj)
+		case "name":
+			out.Values[i] = ec._Constellation_name(ctx, field, obj)
+		case "galaxies":
+			out.Values[i] = ec._Constellation_galaxies(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var constellationConnectionImplementors = []string{"ConstellationConnection"}
+
+func (ec *executionContext) _ConstellationConnection(ctx context.Context, sel ast.SelectionSet, obj *model.ConstellationConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, constellationConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ConstellationConnection")
+		case "nodes":
+			out.Values[i] = ec._ConstellationConnection_nodes(ctx, field, obj)
+		case "edges":
+			out.Values[i] = ec._ConstellationConnection_edges(ctx, field, obj)
+		case "pageInfo":
+			out.Values[i] = ec._ConstellationConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._ConstellationConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var constellationEdgeImplementors = []string{"ConstellationEdge"}
+
+func (ec *executionContext) _ConstellationEdge(ctx context.Context, sel ast.SelectionSet, obj *model.ConstellationEdge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, constellationEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ConstellationEdge")
+		case "cursor":
+			out.Values[i] = ec._ConstellationEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "node":
+			out.Values[i] = ec._ConstellationEdge_node(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var createConstellationPayloadImplementors = []string{"CreateConstellationPayload"}
+
+func (ec *executionContext) _CreateConstellationPayload(ctx context.Context, sel ast.SelectionSet, obj *model.CreateConstellationPayload) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, createConstellationPayloadImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CreateConstellationPayload")
+		case "constellation":
+			out.Values[i] = ec._CreateConstellationPayload_constellation(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var createConstellationsPayloadImplementors = []string{"CreateConstellationsPayload"}
+
+func (ec *executionContext) _CreateConstellationsPayload(ctx context.Context, sel ast.SelectionSet, obj *model.CreateConstellationsPayload) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, createConstellationsPayloadImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("CreateConstellationsPayload")
+		case "constellations":
+			out.Values[i] = ec._CreateConstellationsPayload_constellations(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var galaxyImplementors = []string{"Galaxy", "Node"}
+
+func (ec *executionContext) _Galaxy(ctx context.Context, sel ast.SelectionSet, obj *model.Galaxy) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, galaxyImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Galaxy")
+		case "id":
+			out.Values[i] = ec._Galaxy_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._Galaxy_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._Galaxy_updatedAt(ctx, field, obj)
+		case "name":
+			out.Values[i] = ec._Galaxy_name(ctx, field, obj)
+		case "planets":
+			out.Values[i] = ec._Galaxy_planets(ctx, field, obj)
+		case "stars":
+			out.Values[i] = ec._Galaxy_stars(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var galaxyConnectionImplementors = []string{"GalaxyConnection"}
+
+func (ec *executionContext) _GalaxyConnection(ctx context.Context, sel ast.SelectionSet, obj *model.GalaxyConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, galaxyConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("GalaxyConnection")
+		case "nodes":
+			out.Values[i] = ec._GalaxyConnection_nodes(ctx, field, obj)
+		case "edges":
+			out.Values[i] = ec._GalaxyConnection_edges(ctx, field, obj)
+		case "pageInfo":
+			out.Values[i] = ec._GalaxyConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._GalaxyConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var galaxyEdgeImplementors = []string{"GalaxyEdge"}
+
+func (ec *executionContext) _GalaxyEdge(ctx context.Context, sel ast.SelectionSet, obj *model.GalaxyEdge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, galaxyEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("GalaxyEdge")
+		case "cursor":
+			out.Values[i] = ec._GalaxyEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "node":
+			out.Values[i] = ec._GalaxyEdge_node(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
 
 var mutationImplementors = []string{"Mutation"}
 
@@ -1835,6 +5406,153 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				invalids++
 			}
+		case "createConstellation":
+			out.Values[i] = ec._Mutation_createConstellation(ctx, field)
+		case "createConstellations":
+			out.Values[i] = ec._Mutation_createConstellations(ctx, field)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var pageInfoImplementors = []string{"PageInfo"}
+
+func (ec *executionContext) _PageInfo(ctx context.Context, sel ast.SelectionSet, obj *model.PageInfo) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, pageInfoImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("PageInfo")
+		case "endCursor":
+			out.Values[i] = ec._PageInfo_endCursor(ctx, field, obj)
+		case "hasNextPage":
+			out.Values[i] = ec._PageInfo_hasNextPage(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "hasPreviousPage":
+			out.Values[i] = ec._PageInfo_hasPreviousPage(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "startCursor":
+			out.Values[i] = ec._PageInfo_startCursor(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var planetImplementors = []string{"Planet", "Node"}
+
+func (ec *executionContext) _Planet(ctx context.Context, sel ast.SelectionSet, obj *model.Planet) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, planetImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Planet")
+		case "id":
+			out.Values[i] = ec._Planet_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._Planet_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._Planet_updatedAt(ctx, field, obj)
+		case "name":
+			out.Values[i] = ec._Planet_name(ctx, field, obj)
+		case "description":
+			out.Values[i] = ec._Planet_description(ctx, field, obj)
+		case "planetType":
+			out.Values[i] = ec._Planet_planetType(ctx, field, obj)
+		case "galaxy":
+			out.Values[i] = ec._Planet_galaxy(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var planetConnectionImplementors = []string{"PlanetConnection"}
+
+func (ec *executionContext) _PlanetConnection(ctx context.Context, sel ast.SelectionSet, obj *model.PlanetConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, planetConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("PlanetConnection")
+		case "nodes":
+			out.Values[i] = ec._PlanetConnection_nodes(ctx, field, obj)
+		case "edges":
+			out.Values[i] = ec._PlanetConnection_edges(ctx, field, obj)
+		case "pageInfo":
+			out.Values[i] = ec._PlanetConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._PlanetConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var planetEdgeImplementors = []string{"PlanetEdge"}
+
+func (ec *executionContext) _PlanetEdge(ctx context.Context, sel ast.SelectionSet, obj *model.PlanetEdge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, planetEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("PlanetEdge")
+		case "cursor":
+			out.Values[i] = ec._PlanetEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "node":
+			out.Values[i] = ec._PlanetEdge_node(ctx, field, obj)
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -1875,6 +5593,61 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 				}
 				return res
 			})
+		case "galaxies":
+			field := field
+			out.Concurrently(i, func() (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_galaxies(ctx, field)
+				return res
+			})
+		case "constellations":
+			field := field
+			out.Concurrently(i, func() (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_constellations(ctx, field)
+				return res
+			})
+		case "planets":
+			field := field
+			out.Concurrently(i, func() (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_planets(ctx, field)
+				return res
+			})
+		case "stars":
+			field := field
+			out.Concurrently(i, func() (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_stars(ctx, field)
+				return res
+			})
+		case "node":
+			field := field
+			out.Concurrently(i, func() (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_node(ctx, field)
+				return res
+			})
 		case "__type":
 			out.Values[i] = ec._Query___type(ctx, field)
 		case "__schema":
@@ -1888,6 +5661,129 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 		return graphql.Null
 	}
 	return out
+}
+
+var starImplementors = []string{"Star", "Node"}
+
+func (ec *executionContext) _Star(ctx context.Context, sel ast.SelectionSet, obj *model.Star) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, starImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Star")
+		case "id":
+			out.Values[i] = ec._Star_id(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "createdAt":
+			out.Values[i] = ec._Star_createdAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "updatedAt":
+			out.Values[i] = ec._Star_updatedAt(ctx, field, obj)
+		case "name":
+			out.Values[i] = ec._Star_name(ctx, field, obj)
+		case "class":
+			out.Values[i] = ec._Star_class(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var starConnectionImplementors = []string{"StarConnection"}
+
+func (ec *executionContext) _StarConnection(ctx context.Context, sel ast.SelectionSet, obj *model.StarConnection) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, starConnectionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("StarConnection")
+		case "nodes":
+			out.Values[i] = ec._StarConnection_nodes(ctx, field, obj)
+		case "edges":
+			out.Values[i] = ec._StarConnection_edges(ctx, field, obj)
+		case "pageInfo":
+			out.Values[i] = ec._StarConnection_pageInfo(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "totalCount":
+			out.Values[i] = ec._StarConnection_totalCount(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var starEdgeImplementors = []string{"StarEdge"}
+
+func (ec *executionContext) _StarEdge(ctx context.Context, sel ast.SelectionSet, obj *model.StarEdge) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, starEdgeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	var invalids uint32
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("StarEdge")
+		case "cursor":
+			out.Values[i] = ec._StarEdge_cursor(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				invalids++
+			}
+		case "node":
+			out.Values[i] = ec._StarEdge_node(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch()
+	if invalids > 0 {
+		return graphql.Null
+	}
+	return out
+}
+
+var subscriptionImplementors = []string{"Subscription"}
+
+func (ec *executionContext) _Subscription(ctx context.Context, sel ast.SelectionSet) func() graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, subscriptionImplementors)
+	ctx = graphql.WithFieldContext(ctx, &graphql.FieldContext{
+		Object: "Subscription",
+	})
+	if len(fields) != 1 {
+		ec.Errorf(ctx, "must subscribe to exactly one stream")
+		return nil
+	}
+
+	switch fields[0].Name {
+	case "constellations":
+		return ec._Subscription_constellations(ctx, fields[0])
+	default:
+		panic("unknown field " + strconv.Quote(fields[0].Name))
+	}
 }
 
 var todoImplementors = []string{"Todo"}
@@ -2233,6 +6129,52 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 	return res
 }
 
+func (ec *executionContext) unmarshalNCreateConstellationInput2githubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationInput(ctx context.Context, v interface{}) (model.CreateConstellationInput, error) {
+	res, err := ec.unmarshalInputCreateConstellationInput(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNCreateConstellationInput2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationInputᚄ(ctx context.Context, v interface{}) ([]*model.CreateConstellationInput, error) {
+	var vSlice []interface{}
+	if v != nil {
+		if tmp1, ok := v.([]interface{}); ok {
+			vSlice = tmp1
+		} else {
+			vSlice = []interface{}{v}
+		}
+	}
+	var err error
+	res := make([]*model.CreateConstellationInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNCreateConstellationInput2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNCreateConstellationInput2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationInput(ctx context.Context, v interface{}) (*model.CreateConstellationInput, error) {
+	res, err := ec.unmarshalInputCreateConstellationInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) unmarshalNDateTime2string(ctx context.Context, v interface{}) (string, error) {
+	res, err := graphql.UnmarshalString(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNDateTime2string(ctx context.Context, sel ast.SelectionSet, v string) graphql.Marshaler {
+	res := graphql.MarshalString(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "must not be null")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) unmarshalNID2string(ctx context.Context, v interface{}) (string, error) {
 	res, err := graphql.UnmarshalID(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -2248,9 +6190,34 @@ func (ec *executionContext) marshalNID2string(ctx context.Context, sel ast.Selec
 	return res
 }
 
+func (ec *executionContext) unmarshalNInt2int(ctx context.Context, v interface{}) (int, error) {
+	res, err := graphql.UnmarshalInt(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.SelectionSet, v int) graphql.Marshaler {
+	res := graphql.MarshalInt(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "must not be null")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) unmarshalNNewTodo2githubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐNewTodo(ctx context.Context, v interface{}) (model.NewTodo, error) {
 	res, err := ec.unmarshalInputNewTodo(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNPageInfo2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPageInfo(ctx context.Context, sel ast.SelectionSet, v *model.PageInfo) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	return ec._PageInfo(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalNString2string(ctx context.Context, v interface{}) (string, error) {
@@ -2584,6 +6551,493 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 		return graphql.Null
 	}
 	return graphql.MarshalBoolean(*v)
+}
+
+func (ec *executionContext) marshalOConstellation2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx context.Context, sel ast.SelectionSet, v []*model.Constellation) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOConstellation2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOConstellation2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellation(ctx context.Context, sel ast.SelectionSet, v *model.Constellation) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Constellation(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOConstellationConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellationConnection(ctx context.Context, sel ast.SelectionSet, v *model.ConstellationConnection) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._ConstellationConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOConstellationEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellationEdge(ctx context.Context, sel ast.SelectionSet, v []*model.ConstellationEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOConstellationEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellationEdge(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOConstellationEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐConstellationEdge(ctx context.Context, sel ast.SelectionSet, v *model.ConstellationEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._ConstellationEdge(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOCreateConstellationPayload2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationPayload(ctx context.Context, sel ast.SelectionSet, v *model.CreateConstellationPayload) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._CreateConstellationPayload(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOCreateConstellationsPayload2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐCreateConstellationsPayload(ctx context.Context, sel ast.SelectionSet, v *model.CreateConstellationsPayload) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._CreateConstellationsPayload(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalODateTime2ᚖstring(ctx context.Context, v interface{}) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalString(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalODateTime2ᚖstring(ctx context.Context, sel ast.SelectionSet, v *string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return graphql.MarshalString(*v)
+}
+
+func (ec *executionContext) marshalOGalaxy2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxy(ctx context.Context, sel ast.SelectionSet, v []*model.Galaxy) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOGalaxy2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxy(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOGalaxy2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxy(ctx context.Context, sel ast.SelectionSet, v *model.Galaxy) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Galaxy(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOGalaxyConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyConnection(ctx context.Context, sel ast.SelectionSet, v *model.GalaxyConnection) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._GalaxyConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOGalaxyEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyEdge(ctx context.Context, sel ast.SelectionSet, v []*model.GalaxyEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOGalaxyEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyEdge(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOGalaxyEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐGalaxyEdge(ctx context.Context, sel ast.SelectionSet, v *model.GalaxyEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._GalaxyEdge(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOInt2ᚖint(ctx context.Context, v interface{}) (*int, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalInt(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOInt2ᚖint(ctx context.Context, sel ast.SelectionSet, v *int) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return graphql.MarshalInt(*v)
+}
+
+func (ec *executionContext) marshalONode2githubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐNode(ctx context.Context, sel ast.SelectionSet, v model.Node) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Node(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOPlanet2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanet(ctx context.Context, sel ast.SelectionSet, v []*model.Planet) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOPlanet2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanet(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOPlanet2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanet(ctx context.Context, sel ast.SelectionSet, v *model.Planet) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Planet(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOPlanetConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetConnection(ctx context.Context, sel ast.SelectionSet, v *model.PlanetConnection) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._PlanetConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOPlanetEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetEdge(ctx context.Context, sel ast.SelectionSet, v []*model.PlanetEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOPlanetEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetEdge(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOPlanetEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetEdge(ctx context.Context, sel ast.SelectionSet, v *model.PlanetEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._PlanetEdge(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOPlanetTypeEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetTypeEnum(ctx context.Context, v interface{}) (*model.PlanetTypeEnum, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.PlanetTypeEnum)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOPlanetTypeEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐPlanetTypeEnum(ctx context.Context, sel ast.SelectionSet, v *model.PlanetTypeEnum) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
+}
+
+func (ec *executionContext) marshalOStar2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStar(ctx context.Context, sel ast.SelectionSet, v []*model.Star) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOStar2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStar(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOStar2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStar(ctx context.Context, sel ast.SelectionSet, v *model.Star) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Star(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOStarConnection2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarConnection(ctx context.Context, sel ast.SelectionSet, v *model.StarConnection) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._StarConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOStarEdge2ᚕᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarEdge(ctx context.Context, sel ast.SelectionSet, v []*model.StarEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	var wg sync.WaitGroup
+	isLen1 := len(v) == 1
+	if !isLen1 {
+		wg.Add(len(v))
+	}
+	for i := range v {
+		i := i
+		fc := &graphql.FieldContext{
+			Index:  &i,
+			Result: &v[i],
+		}
+		ctx := graphql.WithFieldContext(ctx, fc)
+		f := func(i int) {
+			defer func() {
+				if r := recover(); r != nil {
+					ec.Error(ctx, ec.Recover(ctx, r))
+					ret = nil
+				}
+			}()
+			if !isLen1 {
+				defer wg.Done()
+			}
+			ret[i] = ec.marshalOStarEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarEdge(ctx, sel, v[i])
+		}
+		if isLen1 {
+			f(i)
+		} else {
+			go f(i)
+		}
+
+	}
+	wg.Wait()
+	return ret
+}
+
+func (ec *executionContext) marshalOStarEdge2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStarEdge(ctx context.Context, sel ast.SelectionSet, v *model.StarEdge) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._StarEdge(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOStellarClassEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStellarClassEnum(ctx context.Context, v interface{}) (*model.StellarClassEnum, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var res = new(model.StellarClassEnum)
+	err := res.UnmarshalGQL(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOStellarClassEnum2ᚖgithubᚗcomᚋtaustenᚋtylerᚑdd2020q3ᚑtodosᚋgraphᚋmodelᚐStellarClassEnum(ctx context.Context, sel ast.SelectionSet, v *model.StellarClassEnum) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return v
 }
 
 func (ec *executionContext) unmarshalOString2string(ctx context.Context, v interface{}) (string, error) {
